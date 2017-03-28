@@ -20,6 +20,7 @@
 #  FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 #  DEALINGS IN THE SOFTWARE.
 
+import fasteners
 import glob
 import os
 import shutil
@@ -27,6 +28,37 @@ import shutil
 import sh
 
 from gilt import util
+
+
+def _git_env(repository):
+    """
+    Git environment variables for specific repository.
+
+    :param repository: path to a git repository.
+    :return: dict of envionment variables.
+    """
+    return {
+        "GIT_WORK_TREE": repository,
+        "GIT_DIR": os.path.join(repository, ".git"),
+        "GIT_OBJECT_DIRECTORY": os.path.join(repository, ".git", "objects")
+    }
+
+
+def do_overlay(config, debug=False):
+    """
+    Actual methods the overlays git based repo.
+
+    :param config: A dict contains configuration of the git resource.
+    :param debug: An optional bool to toggle debug output.
+    :return: None
+    """
+    with fasteners.InterProcessLock(config.lock_file):
+        if not os.path.exists(config.src):
+            clone(config.name, config.git, config.src, debug=debug)
+        if config.dst:
+            extract(config.src, config.dst, config.version, debug=debug)
+        else:
+            overlay(config.src, config.files, config.version, debug=debug)
 
 
 def clone(name, repository, destination, debug=False):
@@ -60,15 +92,18 @@ def extract(repository, destination, version, debug=False):
     :param debug: An optional bool to toggle debug output.
     :return: None
     """
-    with util.saved_cwd():
-        os.chdir(repository)
-        _get_branch(version, debug)
-        cmd = sh.git.bake(
-            'checkout-index', force=True, all=True, prefix=destination)
-        util.run_command(cmd, debug=debug)
-        msg = '  - extracting ({}) {} to {}'.format(version, repository,
-                                                    destination)
-        util.print_info(msg)
+    git_env = _git_env(repository)
+    _get_branch(version, debug, git_env)
+    cmd = sh.git.bake(
+        'checkout-index',
+        force=True,
+        all=True,
+        prefix=destination,
+        _env=git_env)
+    util.run_command(cmd, debug=debug)
+    msg = '  - extracting ({}) {} to {}'.format(version, repository,
+                                                destination)
+    util.print_info(msg)
 
 
 def overlay(repository, files, version, debug=False):
@@ -83,27 +118,26 @@ def overlay(repository, files, version, debug=False):
     :param debug: An optional bool to toggle debug output.
     :return: None
     """
-    with util.saved_cwd():
-        os.chdir(repository)
-        _get_branch(version, debug)
 
-        for fc in files:
-            if '*' in fc.src:
-                for filename in glob.glob(fc.src):
-                    util.copy(filename, fc.dst)
-                    msg = '  - copied ({}) {} to {}'.format(version, filename,
-                                                            fc.dst)
-                    util.print_info(msg)
-            else:
-                if os.path.isdir(fc.dst) and os.path.isdir(fc.src):
-                    shutil.rmtree(fc.dst)
-                util.copy(fc.src, fc.dst)
-                msg = '  - copied ({}) {} to {}'.format(version, fc.src,
+    git_env = _git_env(repository)
+    _get_branch(version, debug, git_env)
+
+    for fc in files:
+        if '*' in fc.src:
+            for filename in glob.glob(fc.src):
+                util.copy(filename, fc.dst)
+                msg = '  - copied ({}) {} to {}'.format(version, filename,
                                                         fc.dst)
                 util.print_info(msg)
+        else:
+            if os.path.isdir(fc.dst) and os.path.isdir(fc.src):
+                shutil.rmtree(fc.dst)
+            util.copy(fc.src, fc.dst)
+            msg = '  - copied ({}) {} to {}'.format(version, fc.src, fc.dst)
+            util.print_info(msg)
 
 
-def _get_branch(version, debug=False):
+def _get_branch(version, debug=False, env=None):
     """
     Handle switching to the specified version and return None.
 
@@ -116,18 +150,18 @@ def _get_branch(version, debug=False):
     :param debug: An optional bool to toggle debug output.
     :return: None
     """
-    cmd = sh.git.bake('fetch')
+    cmd = sh.git.bake('fetch', _env=env)
     util.run_command(cmd, debug=debug)
-    cmd = sh.git.bake('checkout', version)
+    cmd = sh.git.bake('checkout', version, _env=env)
     util.run_command(cmd, debug=debug)
-    cmd = sh.git.bake('clean', '-d', '-x', '-f')
+    cmd = sh.git.bake('clean', '-d', '-x', '-f', _env=env)
     util.run_command(cmd, debug=debug)
-    if _is_branch(version, debug):
-        cmd = sh.git.bake('pull', rebase=True, ff_only=True)
+    if _is_branch(version, debug, env):
+        cmd = sh.git.bake('pull', rebase=True, ff_only=True, _env=env)
         util.run_command(cmd, debug=debug)
 
 
-def _is_branch(version, debug=False):
+def _is_branch(version, debug=False, env=None):
     """
     Determine a version is a git branch name or not.
 
@@ -135,8 +169,12 @@ def _is_branch(version, debug=False):
     :param debug: An optional bool to toggle debug output.
     :return: bool
     """
-    cmd = sh.git.bake('show-ref', '--verify', '--quiet',
-                      "refs/heads/{}".format(version))
+    cmd = sh.git.bake(
+        'show-ref',
+        '--verify',
+        '--quiet',
+        "refs/heads/{}".format(version),
+        _env=env)
     try:
         util.run_command(cmd, debug=debug)
         return True
