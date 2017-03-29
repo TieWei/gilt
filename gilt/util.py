@@ -31,6 +31,7 @@ import colorama
 
 colorama.init(autoreset=True)
 _lock = threading.Lock()
+_named_locks = {}
 
 
 def print_info(msg):
@@ -45,6 +46,15 @@ def print_warn(msg):
     with _lock:
         print '{}{}'.format(colorama.Fore.YELLOW, msg)
         sys.stdout.flush()
+
+
+@contextlib.contextmanager
+def named_lock(name):
+    with _lock:
+        if name not in _named_locks:
+            _named_locks[name] = threading.Lock()
+    with _named_locks[name]:
+        yield
 
 
 def run_command(cmd, debug=False):

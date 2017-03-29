@@ -53,12 +53,13 @@ def do_overlay(config, debug=False):
     :return: None
     """
     with fasteners.InterProcessLock(config.lock_file):
-        if not os.path.exists(config.src):
-            clone(config.name, config.git, config.src, debug=debug)
-        if config.dst:
-            extract(config.src, config.dst, config.version, debug=debug)
-        else:
-            overlay(config.src, config.files, config.version, debug=debug)
+        with util.named_lock(config.name):
+            if not os.path.exists(config.src):
+                clone(config.name, config.git, config.src, debug=debug)
+            if config.dst:
+                extract(config.src, config.dst, config.version, debug=debug)
+            else:
+                overlay(config.src, config.files, config.version, debug=debug)
 
 
 def clone(name, repository, destination, debug=False):
