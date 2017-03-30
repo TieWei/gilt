@@ -151,18 +151,44 @@ def _get_branch(version, debug=False, env=None):
     :param debug: An optional bool to toggle debug output.
     :return: None
     """
-    cmd = sh.git.bake('fetch', _env=env)
-    util.run_command(cmd, debug=debug)
+    if not any([_has_branch(version, debug, env),
+                _has_tag(version, debug, env),
+                _has_commit(version, debug, env)]):
+        cmd = sh.git.bake('fetch', _env=env)
+        util.run_command(cmd, debug=debug)
     cmd = sh.git.bake('checkout', version, _env=env)
     util.run_command(cmd, debug=debug)
     cmd = sh.git.bake('clean', '-d', '-x', '-f', _env=env)
     util.run_command(cmd, debug=debug)
-    if _is_branch(version, debug, env):
+    if _has_branch(version, debug, env):
         cmd = sh.git.bake('pull', rebase=True, ff_only=True, _env=env)
         util.run_command(cmd, debug=debug)
 
 
-def _is_branch(version, debug=False, env=None):
+def _has_commit(version, debug, env=None):
+    cmd = sh.git.bake('cat-file', '-e', version, _env=env)
+    try:
+        util.run_command(cmd, debug=debug)
+        return True
+    except sh.ErrorReturnCode:
+        return False
+
+
+def _has_tag(version, debug, env=None):
+    cmd = sh.git.bake(
+        'show-ref',
+        '--verify',
+        '--quiet',
+        "refs/tags/{}".format(version),
+        _env=env)
+    try:
+        util.run_command(cmd, debug=debug)
+        return True
+    except sh.ErrorReturnCode:
+        return False
+
+
+def _has_branch(version, debug=False, env=None):
     """
     Determine a version is a git branch name or not.
 
